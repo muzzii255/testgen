@@ -10,16 +10,20 @@ TestGen is a CLI tool for generating and recording tests for Go web applications
 - **CRUD Test Support**: Automatically generates tests for Create, Read, Update, and Delete operations
 - **Struct Mapping**: Automatically maps JSON payloads to Go struct definitions
 
+## Demo
+
+[![asciicast](https://asciinema.org/a/58pl5lMoYDuotRmn.png)](https://asciinema.org/a/58pl5lMoYDuotRmn)
+
 ## Installation
 
 ```bash
-go install github.com/yourusername/testgen@latest
+go install github.com/muzzii255/testgen@latest
 ```
 
 Or clone and build from source:
 
 ```bash
-git clone https://github.com/yourusername/testgen.git
+git clone https://github.com/muzzii255/testgen.git
 cd testgen
 go build -o testgen .
 ```
@@ -35,6 +39,7 @@ testgen record --port 9000 --target 8080
 ```
 
 Options:
+
 - `--port, -p`: Port to run the proxy server on (default: 9000)
 - `--target, -t`: Target backend URL port (default: 8080)
 
@@ -49,6 +54,7 @@ testgen gen --file recordings/your-recording.json
 ```
 
 Options:
+
 - `--file, -f`: Path to the recorded JSON file (required)
 
 ### Code Annotations
@@ -67,11 +73,13 @@ type User struct {
 ```
 
 The annotation format is:
+
 ```
 // @testgen router=<endpoint-path> struct=<struct-name>
 ```
 
 For external packages:
+
 ```
 // @testgen router=/api/v1/users struct=package.StructName
 ```
@@ -109,9 +117,10 @@ testgen/
 1. **Start your backend server** on port 8080 (or your preferred port)
 
 2. **Start the recording proxy**:
-   ```bash
-   testgen record --port 9000 --target 8080
-   ```
+
+    ```bash
+    testgen record --port 9000 --target 8080
+    ```
 
 3. **Configure your application** to use the proxy (set `HTTP_PROXY=http://localhost:9000`)
 
@@ -120,23 +129,32 @@ testgen/
 5. **Stop the proxy** - recordings will be saved automatically
 
 6. **Add annotations** to your code structs:
-   ```go
-   // @testgen router=/api/v1/users struct=models.User
-   type User struct {
-       // ...
-   }
-   ```
+
+    ```go
+    // @testgen router=/api/v1/users struct=models.User
+    type User struct {
+        // ...
+    }
+    ```
 
 7. **Generate tests**:
-   ```bash
-   testgen gen --file recordings/2026-01-01-users.json
-   ```
+
+    ```bash
+    testgen gen --file recordings/2026-01-01-users.json
+    ```
 
 8. **Find generated tests** in the `./gentest` directory
+
+## Examples
+
+Projects using TestGen:
+
+- [test_server](https://github.com/muzzii255/test_server) - Example Go web application with TestGen-generated tests
 
 ## Generated Test Structure
 
 The generated tests include:
+
 - Setup functions for test initialization
 - Test cases for each HTTP method (GET, POST, PUT, DELETE)
 - Status code assertions
