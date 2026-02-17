@@ -207,6 +207,41 @@ The generated tests include:
 - Status code assertions
 - Payload mapping from JSON to Go structs
 
+## Generated Files
+
+TestGen creates a `./gentest/` directory with:
+
+### Initial Setup (generated once)
+
+- **`main_test.go`** - Test suite setup with `TestMain` and example test
+- **`testutils.go`** - Helper functions (`makeReq`, `decodeResp`, `Ptr`)
+
+These files are only created if they don't exist. TestGen never overwrites them, so you can customize them freely.
+
+### Generated Tests (each `testgen gen` run)
+
+- **`{endpoint}_test.go`** - One file per endpoint with all CRUD operations
+
+Example:
+
+```
+gentest/
+├── main_test.go       # Your test setup (edit this once)
+├── testutils.go       # Helper functions (customize as needed)
+├── users_test.go      # Generated from recordings
+└── offices_test.go    # Generated from recordings
+```
+
+**Important:** Update `main_test.go` to initialize your actual app:
+
+```go
+var testApp *fiber.App // Change to your framework
+
+func TestMain(m *testing.M) {
+    testApp = setupYourApp() // Your initialization
+}
+```
+
 ## Requirements
 
 - Go 1.25 or later
