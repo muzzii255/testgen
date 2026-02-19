@@ -2,8 +2,9 @@ package generator
 
 import (
 	"bufio"
+	"fmt"
 	"io/fs"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,7 +32,7 @@ func (s *Scanner) scanFile(path string) ([]string, error) {
 	return results, nil
 }
 
-func (s *Scanner) getTags(str string) (string, string) {
+func (s *Scanner) getTags(str string) (string, string, error) {
 	str = strings.ReplaceAll(str, "//", "")
 	a := strings.SplitSeq(str, " ")
 	var endpoint string
@@ -46,29 +47,41 @@ func (s *Scanner) getTags(str string) (string, string) {
 
 	}
 	if endpoint != "" && strct != "" {
-		return endpoint, strct
+		return endpoint, strct, nil
 	}
-	return "skillIssues", "skillIssues"
+	return "", "", fmt.Errorf("missing router or struct tag in the :%s", str)
 }
 
-func (s *Scanner) ScanTags() map[string]map[string]string {
+func (s *Scanner) ScanTags() (map[string]map[string]string, error) {
 	resultsMap := make(map[string]map[string]string)
 	results := make(map[string]string)
 	tagList := make([]string, 0)
-	filepath.WalkDir(s.InputDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
+	err := filepath.WalkDir(s.InputDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			slog.Error("error accessing path", "path", path, "err", err)
+			return nil
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") {
 			return nil
 		}
 		res, err := s.scanFile(path)
 		if err != nil {
-			log.Println(err)
+			slog.Error("error scanning files", "path", path, "err", err)
+			return err
 		}
 		tagList = append(tagList, res...)
 		return nil
 	})
+	if err != nil {
+		return resultsMap, fmt.Errorf("error reading directory %s :%v", s.InputDir, err)
+	}
 	for _, i := range tagList {
-		a, b := s.getTags(i)
-		results[a] = b
+		router, strct, err := s.getTags(i)
+		if err != nil {
+			slog.Error("error extracting tags from string", "string", i, "err", err)
+			continue
+		}
+		results[router] = strct
 	}
 	for key, item := range results {
 		var folder, strct string
@@ -89,5 +102,5 @@ func (s *Scanner) ScanTags() map[string]map[string]string {
 		resultsMap[key]["name"] = item
 	}
 
-	return resultsMap
+	return resultsMap, nil
 }

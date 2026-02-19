@@ -4,22 +4,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+
 	"github.com/muzzii255/testgen/proxy"
 	"github.com/muzzii255/testgen/structgen"
 )
 
-var (
-	testFileDir = "./gentest"
-	methodFunc  = map[string]string{
-		"POST":   "Create",
-		"GET":    "Get",
-		"PUT":    "Update",
-		"DELETE": "Delete",
-	}
-)
+const testFileDir = "./gentest"
 
 var statusMap = map[int]string{
 	200: "http.StatusOK",
@@ -52,28 +46,26 @@ type JsonFile struct {
 	recordings map[string]proxy.Recording
 }
 
-type BodyFormat struct {
-	Payloads []string
-	Method   string
-	Endpoint string
-}
-
 func (j *JsonFile) ReadFile() error {
 	file, err := os.Open(j.Filename)
 	if err != nil {
-		return err
+		return fmt.Errorf("error opening file %s :%v", j.Filename, err)
 	}
 	data, err := io.ReadAll(file)
 	if err != nil {
-		return err
+		return fmt.Errorf("error reading file %s :%v", j.Filename, err)
 	}
 
 	if err := json.Unmarshal(data, &j.recordings); err != nil {
-		return err
+		return fmt.Errorf("error parsing recordings %s :%v", j.Filename, err)
 	}
 
 	scanner := Scanner{InputDir: j.BaseDir}
-	j.models = scanner.ScanTags()
+	models, err := scanner.ScanTags()
+	if err != nil {
+		return err
+	}
+	j.models = models
 	return nil
 }
 
@@ -125,7 +117,7 @@ func (j *JsonFile) detectFiles() error {
 
 func (j *JsonFile) getFileName() string {
 	fn := strings.Split(j.Filename, "-")
-	if len(fn) != 0 {
+	if len(fn) > 1 {
 		return strings.ReplaceAll(fn[len(fn)-1], ".json", "") + "_test.go"
 	} else {
 		return "no_name_test.go"
@@ -161,8 +153,14 @@ func (j *JsonFile) genPostRun(endpoint string, rows []proxy.BodyRecords) string 
 		if !ok {
 			sm = "http.StatusOK"
 		}
+		strctStr, err := structGen.MapField(strct, rawJson)
+		if err != nil {
+			slog.Error("error parsing struct during codegeneration", "struct", strct, "pkg", structGen.PkgPath, "err", err)
+			sb.Reset()
+			return ""
+		}
 		fmt.Fprintf(&sb, "payload := %s", sname)
-		sb.WriteString(structGen.MapField(strct, rawJson))
+		sb.WriteString(strctStr)
 		sb.WriteString("\n\n")
 		fmt.Fprintf(&sb, `resp := makeReq(t, app, http.MethodPost, "%s", payload)`, endpoint)
 		sb.WriteString("\n")
@@ -183,7 +181,13 @@ func (j *JsonFile) genPostRun(endpoint string, rows []proxy.BodyRecords) string 
 			if err := json.Unmarshal([]byte(rows[i].Body), &rawJson); err != nil {
 				continue
 			}
-			sb.WriteString(structGen.MapField(strct, rawJson))
+			strctStr, err := structGen.MapField(strct, rawJson)
+			if err != nil {
+				slog.Error("error parsing struct during codegeneration", "struct", strct, "pkg", structGen.PkgPath, "err", err)
+				sb.Reset()
+				return ""
+			}
+			sb.WriteString(strctStr)
 			sb.WriteString(",},\n")
 		}
 		sb.WriteString("}\n")
@@ -304,14 +308,21 @@ func (j *JsonFile) genPutRun(endpoint string, rows []proxy.BodyRecords) string {
 		if !ok {
 			sm = "http.StatusOK"
 		}
+		strctStr, err := structGen.MapField(strct, rawJson)
+		if err != nil {
+			slog.Error("error parsing struct during codegeneration", "struct", strct, "pkg", structGen.PkgPath, "err", err)
+			sb.Reset()
+			return ""
+		}
 		fmt.Fprintf(&sb, "payload := %s", sname)
-		sb.WriteString(structGen.MapField(strct, rawJson))
+		sb.WriteString(strctStr)
 		sb.WriteString("\n\n")
 		fmt.Fprintf(&sb, `resp := makeReq(t, app, http.MethodPut, "%s", payload)`, endpoint)
 		sb.WriteString("\n")
 		fmt.Fprintf(&sb, `require.Equal(t, %s, resp.StatusCode)`, sm)
 		sb.WriteString("\n})")
 	} else {
+
 		fmt.Fprintf(&sb, "payloads := []struct{\nname string\npayload %s\nexpectedStatus int\n}{\n", sname)
 		for i := range rows {
 			rawJson := make(map[string]any)
@@ -323,7 +334,13 @@ func (j *JsonFile) genPutRun(endpoint string, rows []proxy.BodyRecords) string {
 			if err := json.Unmarshal([]byte(rows[i].Body), &rawJson); err != nil {
 				continue
 			}
-			sb.WriteString(structGen.MapField(strct, rawJson))
+			strctStr, err := structGen.MapField(strct, rawJson)
+			if err != nil {
+				slog.Error("error parsing struct during codegeneration", "struct", strct, "pkg", structGen.PkgPath, "err", err)
+				sb.Reset()
+				return ""
+			}
+			sb.WriteString(strctStr)
 			sb.WriteString(",},\n")
 		}
 		sb.WriteString("}\n")
@@ -358,14 +375,13 @@ func (j *JsonFile) genTestFunction(ep string, rcrd proxy.Recording) string {
 func (j *JsonFile) GenTest() error {
 	err := j.detectFiles()
 	if err != nil {
-		return err
+		return fmt.Errorf("error detecting files on %s, :%v", testFileDir, err)
 	}
 	fname := j.getFileName()
 	var sb strings.Builder
 	sb.WriteString(`package gentests
 	import (
 			"net/http"
-			"net/http/httptest"
 			"testing"
 			"github.com/stretchr/testify/require"
 			)
@@ -377,7 +393,7 @@ func (j *JsonFile) GenTest() error {
 	}
 	err = os.WriteFile(filepath.Join("./gentest", fname), []byte(sb.String()), 0o644)
 	if err != nil {
-		return err
+		return fmt.Errorf("error writing test file %s :%v", fname, err)
 	}
 
 	return nil

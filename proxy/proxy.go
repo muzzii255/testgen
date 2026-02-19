@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -12,10 +13,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
-
-var recordings = make(map[string]Recording)
 
 type Recording struct {
 	Body    []BodyRecords     `json:"bodyRecords"`
@@ -32,8 +32,10 @@ type BodyRecords struct {
 }
 
 type Recorder struct {
-	targetURL *url.URL
-	outputDir string
+	targetURL  *url.URL
+	outputDir  string
+	mu         sync.RWMutex
+	recordings map[string]Recording
 }
 
 func NewRecorder(targetURL, outputDir string) (*Recorder, error) {
@@ -47,17 +49,24 @@ func NewRecorder(targetURL, outputDir string) (*Recorder, error) {
 	}
 
 	return &Recorder{
-		targetURL: target,
-		outputDir: outputDir,
+		targetURL:  target,
+		outputDir:  outputDir,
+		recordings: make(map[string]Recording),
 	}, nil
 }
 
 func (r *Recorder) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	reqBody, _ := io.ReadAll(req.Body)
+	reqBody, err := io.ReadAll(req.Body)
+	if err != nil {
+		slog.Error("error reading body", "path", req.URL.Path, "err", err)
+		return
+	}
 	req.Body = io.NopCloser(bytes.NewBuffer(reqBody))
 	url := req.URL.Path
-	url = normalizeUrl(url)
-	recording, ok := recordings[url]
+	url = normalizeURL(url)
+
+	r.mu.Lock()
+	recording, ok := r.recordings[url]
 	if !ok {
 		recording = Recording{
 			Headers: make(map[string]string),
@@ -69,34 +78,44 @@ func (r *Recorder) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				recording.Headers[k] = v[0]
 			}
 		}
-		recordings[url] = recording
+		r.recordings[url] = recording
 	}
+	r.mu.Unlock()
+
 	body := BodyRecords{
-		Path:      cleanUrl(req.URL.Path),
+		Path:      cleanURL(req.URL.Path),
 		Method:    req.Method,
 		Body:      string(reqBody),
 		Timestamp: time.Now(),
 	}
 	proxy := httputil.NewSingleHostReverseProxy(r.targetURL)
+	proxy.ErrorHandler = func(w http.ResponseWriter, req *http.Request, err error) {
+		slog.Error("proxy error", "path", req.URL.Path, "err", err)
+		w.WriteHeader(http.StatusBadGateway)
+	}
 
 	proxy.ModifyResponse = func(resp *http.Response) error {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("reading response body: %w", err)
+		}
 		resp.Body = io.NopCloser(bytes.NewBuffer(respBody))
-
 		body.StatusCode = resp.StatusCode
 		body.ResponseBody = string(respBody)
 		recording.Body = append(recording.Body, body)
-		recordings[url] = recording
-		// r.save(recordings)
-		return r.save()
+		r.mu.Lock()
+		r.recordings[url] = recording
+		r.mu.Unlock()
+		return nil
 	}
-
 	proxy.ServeHTTP(w, req)
 }
 
-func (r *Recorder) save() error {
+func (r *Recorder) Save() {
 	fileData := make(map[string]map[string]Recording)
-	for key, item := range recordings {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for key, item := range r.recordings {
 		filename := fmt.Sprintf("%s-%s.json",
 			time.Now().Format("2006-01-02"),
 			cleanPath(key),
@@ -109,53 +128,54 @@ func (r *Recorder) save() error {
 
 	}
 	for filename, data := range fileData {
-		data, _ := json.MarshalIndent(data, "", "  ")
-		return os.WriteFile(filepath.Join(r.outputDir, filename), data, 0o644)
-
+		mdata, err := json.MarshalIndent(data, "", "  ")
+		if err != nil {
+			slog.Error("error marshalling recording", "err", err)
+			continue
+		}
+		err = os.WriteFile(filepath.Join(r.outputDir, filename), mdata, 0o644)
+		if err != nil {
+			slog.Error("error writing file", "file", filename, "err", err)
+			continue
+		}
 	}
-	return nil
 }
 
-func cleanPath(a string) string {
-	res := strings.Split(a, "/")
-	fn := make([]string, 0)
+func cleanPath(url string) string {
+	res := strings.Split(url, "/")
+	urlChunks := make([]string, 0)
 	for _, i := range res {
 		o := strings.Split(i, "?")
 
 		i = o[0]
-		if len(i) > 3 && strings.ReplaceAll(i, " ", "") != "" {
-			fn = append(fn, i)
+		i = strings.Trim(i, "")
+		if len(i) > 3 && i != "" {
+			urlChunks = append(urlChunks, i)
 		}
 	}
-	if len(fn) == 0 {
-		fn = append(fn, res[len(res)-1])
+	if len(urlChunks) == 0 {
+		urlChunks = append(urlChunks, res[len(res)-1])
 	}
 
-	fnn := strings.Join(fn, "_")
-	if fnn == " " || fnn == "" {
-		fnn = "noname"
+	cleanPath := strings.Join(urlChunks, "_")
+	if cleanPath == "" {
+		cleanPath = "noname"
 	}
-	return fnn
+	return cleanPath
 }
 
-func cleanUrl(a string) string {
-	b := strings.SplitSeq(a, "/")
-	i := 0
+func cleanURL(url string) string {
+	b := strings.SplitSeq(url, "/")
 	for o := range b {
 		if _, err := strconv.Atoi(o); err == nil {
-			if i == 0 {
-				a = strings.Replace(a, o, ":id", 1)
-			} else {
-				a = strings.Replace(a, o, fmt.Sprintf(":id%d", i), 1)
-			}
-			i++
+			url = strings.ReplaceAll(url, o, ":id")
 		}
 	}
-	return a
+	return url
 }
 
-func normalizeUrl(a string) string {
-	parts := strings.Split(a, "/")
+func normalizeURL(url string) string {
+	parts := strings.Split(url, "/")
 	normalized := make([]string, 0, len(parts))
 
 	for _, part := range parts {

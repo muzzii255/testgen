@@ -21,12 +21,15 @@ type StructGenerator struct {
 	PkgPath string
 }
 
-func (sg *StructGenerator) loadStructDefinition(structName string) *ast.StructType {
+func (sg *StructGenerator) loadStructDefinition(structName string) (*ast.StructType, error) {
 	cfg := &packages.Config{
 		Mode: packages.NeedTypes | packages.NeedSyntax | packages.NeedTypesInfo,
 		Dir:  sg.BaseDir,
 	}
-	pkgs, _ := packages.Load(cfg, sg.PkgPath)
+	pkgs, err := packages.Load(cfg, sg.PkgPath)
+	if err != nil {
+		return nil, fmt.Errorf("loading package %s: %w", sg.PkgPath, err)
+	}
 	var dataStruct *ast.StructType
 	for _, pkg := range pkgs {
 		for _, file := range pkg.Syntax {
@@ -45,7 +48,7 @@ func (sg *StructGenerator) loadStructDefinition(structName string) *ast.StructTy
 			})
 		}
 	}
-	return dataStruct
+	return dataStruct, nil
 }
 
 func isBuiltinType(name string) bool {
@@ -129,8 +132,11 @@ func (sg *StructGenerator) mapItem(field string, value any, ptr, builtin bool, r
 			row = fmt.Sprintf("%s: []%s%s{\n", r.Names[0], pkgPath, structType)
 			for _, item := range arr {
 				if itemMap, ok := item.(map[string]any); ok {
-					nestedStruct := sg.MapField(structType, itemMap)
-					row += fmt.Sprintf("    %s,\n", nestedStruct)
+					nestedStruct, err := sg.MapField(structType, itemMap)
+					if err != nil {
+						continue
+					}
+					row += fmt.Sprintf("%s,\n", nestedStruct)
 				}
 			}
 			row += "},\n"
@@ -166,7 +172,11 @@ func (sg *StructGenerator) mapItem(field string, value any, ptr, builtin bool, r
 		var st string
 		pkgPath := cleanPkgPath(sg.PkgPath)
 		if dt, ok := value.(map[string]any); ok {
-			st = sg.MapField(field, dt)
+			s, err := sg.MapField(field, dt)
+			if err != nil {
+				return row
+			}
+			st = s
 		}
 		if !ptr {
 			row = fmt.Sprintf("%s: %s%s%s,\n", r.Names[0], pkgPath, field, st)
@@ -206,12 +216,22 @@ func getCorrectValue(value any) string {
 	return ""
 }
 
-func (sg *StructGenerator) MapField(stName string, rawJson map[string]any) string {
-	dataStruct := sg.loadStructDefinition(stName)
+func (sg *StructGenerator) MapField(stName string, rawJson map[string]any) (string, error) {
+	dataStruct, err := sg.loadStructDefinition(stName)
+	if err != nil {
+		return "", err
+	}
+	if dataStruct == nil {
+		return "", fmt.Errorf("struct not found %s %s", stName, sg.PkgPath)
+	}
 	var sb strings.Builder
 
 	sb.WriteString("{\n")
 	for _, r := range dataStruct.Fields.List {
+		if r.Tag == nil {
+			continue
+		}
+
 		jsonTag := getJsonTag(r.Tag.Value)
 		value, ok := rawJson[jsonTag]
 		if !ok {
@@ -222,5 +242,5 @@ func (sg *StructGenerator) MapField(stName string, rawJson map[string]any) strin
 
 	}
 	sb.WriteString("}")
-	return sb.String()
+	return sb.String(), nil
 }

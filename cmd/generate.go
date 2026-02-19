@@ -1,18 +1,13 @@
-/*
-Copyright © 2026 NAME HERE muzammil.jvd@gmail.com
-*/
 package cmd
 
 import (
-	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/muzzii255/testgen/generator"
 
 	"github.com/spf13/cobra"
 )
-
-var fileLoc string
 
 var generateCmd = &cobra.Command{
 	Use:   "gen",
@@ -22,26 +17,35 @@ Supports integration tests.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		cwd, err := os.Getwd()
 		if err != nil {
-			panic(err)
+			slog.Error("error fetching cwd", "err", err)
+			return
 		}
-		fmt.Println(cwd)
+		fileLoc, err := cmd.Flags().GetString("file")
+		if err != nil {
+			slog.Error("error parsing file flag", "err", err)
+			return
+		}
 		jsonFile := generator.JsonFile{
 			Filename: fileLoc,
 			BaseDir:  cwd,
 		}
 		err = jsonFile.ReadFile()
 		if err != nil {
-			panic(err)
+			slog.Error("error reading file", "err", err)
+			return
+
 		}
 		err = jsonFile.GenTest()
 		if err != nil {
-			panic(err)
+			slog.Error("error generating test files", "err", err)
+			return
+
 		}
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(generateCmd)
-	generateCmd.Flags().StringVarP(&fileLoc, "file", "f", "", "Path to the recorded JSON file used to generate test cases.")
+	generateCmd.Flags().StringP("file", "f", "", "Path to the recorded JSON file used to generate test cases.")
 	generateCmd.MarkFlagRequired("file")
 }
