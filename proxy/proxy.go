@@ -108,6 +108,7 @@ func (r *Recorder) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		r.mu.Unlock()
 		return nil
 	}
+	slog.Info("request proxied", "path", req.URL.Path)
 	proxy.ServeHTTP(w, req)
 }
 

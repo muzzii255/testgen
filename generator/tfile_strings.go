@@ -9,16 +9,15 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	"github.com/gofiber/fiber/v3"
 )
 
-var testApp *your.App // your app
-
+var testApp *fiber.App
 
 func TestMain(m *testing.M) {
 }
 
-func setup() *your.App {
+func setup() *fiber.App {
 	return testApp
 }
 
@@ -33,12 +32,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/require"
 )
 
-
-func makeReq(t *testing.T, app *your.App, method, path string, body any) *http.Response {
+func makeReq(t *testing.T, app *fiber.App, method, path string, body any) *http.Response {
 	var reader io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
